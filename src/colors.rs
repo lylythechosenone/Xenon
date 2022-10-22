@@ -6,6 +6,11 @@ pub struct Color {
     pub b: u8,
     pub a: u8,
 }
+impl Default for Color {
+    fn default() -> Self {
+        Self::BLACK
+    }
+}
 impl Color {
     /// Red (#FF0000).
     pub const RED: Color = Color::rgb(255, 0, 0);

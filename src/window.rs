@@ -1,34 +1,63 @@
-use crate::input::Input;
-use log::debug;
-use winit::event::{Event, KeyboardInput, WindowEvent};
-use crate::rendering::RenderState;
+use crate::{
+    input::Input,
+    math::{Box2D, Point2D, Size2D},
+    rendering::Canvas,
+    widgets::Widget,
+};
+use log::{debug, trace};
+use winit::{
+    dpi::{LogicalSize, PhysicalSize},
+    event::{Event, KeyboardInput, WindowEvent},
+};
 
-pub struct Window<Renderer: crate::rendering::Renderer> {
-    window: winit::window::Window,
+pub struct Window<Renderer: crate::rendering::Renderer, Root: Widget> {
+    pub(crate) window: winit::window::Window,
     event_loop: winit::event_loop::EventLoop<()>,
     input: Input,
     renderer: Renderer,
-    render_state: RenderState,
+    root: Root,
 }
-impl<Renderer: crate::rendering::Renderer> Window<Renderer> {
-    pub fn new(title: &str) -> Self {
+impl<Renderer: crate::rendering::Renderer, Root: Widget> Window<Renderer, Root> {
+    pub fn new(title: &str, mut root: Root) -> Self {
         let event_loop = winit::event_loop::EventLoop::new();
+        let size = root
+            .size(Size2D::new(800.0, 600.0))
+            .max(Size2D::new(1.0, 1.0));
         let window = winit::window::WindowBuilder::new()
             .with_title(title)
+            .with_inner_size(LogicalSize::new(size.width, size.height))
             .build(&event_loop)
             .unwrap();
-        let render_state = RenderState::new();
-        let renderer = Renderer::with_state(&format!("{} renderer", title), &mut render_state);
+        let mut renderer = Renderer::new(&window);
+        let mut input = Input::new(Box2D::new(
+            Point2D::new(0.0, 0.0),
+            Point2D::new(size.width, size.height),
+        ));
+        input.update();
+        root.update(&input);
+        root.render(Canvas::new(
+            &mut renderer,
+            Box2D::new(
+                Point2D::new(0.0, 0.0),
+                Point2D::new(size.width, size.height),
+            ),
+        ));
+        renderer.render();
         Self {
             window,
             event_loop,
-            input: Input::new(),
+            input,
             renderer,
-            render_state
+            root,
         }
     }
-    pub fn run(mut self) -> ! {
+    pub fn run(mut self) -> !
+    where
+        Renderer: 'static,
+        Root: 'static,
+    {
         self.event_loop.run(move |event, _elwt, control_flow| {
+            trace!("Event loop run");
             *control_flow = winit::event_loop::ControlFlow::Wait;
             match event {
                 Event::WindowEvent {
@@ -55,8 +84,65 @@ impl<Renderer: crate::rendering::Renderer> Window<Renderer> {
                         self.input.process_released(key);
                     }
                 },
+                Event::WindowEvent {
+                    event: WindowEvent::MouseInput { state, button, .. },
+                    ..
+                } => match state {
+                    winit::event::ElementState::Pressed => {
+                        self.input.process_mouse_click(button);
+                    }
+                    winit::event::ElementState::Released => {
+                        self.input.process_mouse_release(button);
+                    }
+                },
+                Event::WindowEvent {
+                    event: WindowEvent::CursorMoved { position, .. },
+                    ..
+                } => {
+                    let position = position.to_logical(self.window.scale_factor());
+                    self.input.process_mouse_move(Point2D::new(
+                        position.x,
+                        position.y,
+                    ));
+                }
+                Event::MainEventsCleared => {
+                    self.input.update();
+                    if self.root.update(&self.input) {
+                        debug!("Updating");
+                        let window_size = self
+                            .window
+                            .inner_size()
+                            .to_logical(self.window.scale_factor());
+                        let size = self.root.size(
+                            Size2D::new(window_size.width, window_size.height)
+                                .max(Size2D::new(1.0, 1.0)),
+                        );
+                        self.root.render(Canvas::new(
+                            &mut self.renderer,
+                            Box2D::new(
+                                Point2D::new(0.0, 0.0),
+                                Point2D::new(size.width, size.height),
+                            ),
+                        ));
+                        if LogicalSize::new(size.width, size.height) != window_size {
+                            debug!("Resizing window to: {:?}", size);
+                            self.input.set_bounds(Box2D::new(
+                                Point2D::new(0.0, 0.0),
+                                Point2D::new(size.width, size.height),
+                            ));
+                            self.window
+                                .set_inner_size(PhysicalSize::new(size.width, size.height));
+                            self.renderer
+                                .resize(size, self.window.scale_factor() as f32);
+                        }
+                        self.window.request_redraw();
+                    }
+                }
+                Event::RedrawRequested(_) => {
+                    self.renderer.render();
+                }
                 _ => {
-                    debug!("Ignored event: {:?}", event);
+                    trace!("Ignored event: {:?}", event);
                 }
             }
         });
@@ -119,18 +205,23 @@ impl WindowBuilder {
         self.window_builder = self.window_builder.with_max_inner_size(size);
         self
     }
-    pub fn build<Renderer: crate::rendering::Renderer>(self, renderer: Renderer, render_state: RenderState) -> Window<Renderer> {
+    pub fn build<Renderer: crate::rendering::Renderer, Root: Widget>(
+        self,
+        root: Root,
+    ) -> Window<Renderer, Root> {
         let event_loop = winit::event_loop::EventLoop::new();
         let window = self.window_builder.build(&event_loop).unwrap();
+        let renderer = Renderer::new(&window);
+        let size = window.inner_size().to_logical(window.scale_factor());
         Window {
-            event_loop,
             window,
-            input: Input::new(),
+            event_loop,
+            input: Input::new(Box2D::new(
+                Point2D::new(0.0, 0.0),
+                Point2D::new(size.width, size.height),
+            )),
             renderer,
-            render_state,
+            root,
         }
-    }
-    pub fn run<Renderer: crate::rendering::Renderer>(self, renderer: Renderer, render_state: RenderState) -> ! {
-        self.build(renderer, render_state).run()
     }
 }
