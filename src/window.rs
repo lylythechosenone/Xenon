@@ -100,10 +100,8 @@ impl<Renderer: crate::rendering::Renderer, Root: Widget> Window<Renderer, Root> 
                     ..
                 } => {
                     let position = position.to_logical(self.window.scale_factor());
-                    self.input.process_mouse_move(Point2D::new(
-                        position.x,
-                        position.y,
-                    ));
+                    self.input
+                        .process_mouse_move(Point2D::new(position.x, position.y));
                 }
                 Event::MainEventsCleared => {
                     self.input.update();
